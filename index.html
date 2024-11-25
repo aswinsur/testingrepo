@@ -1,0 +1,382 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>ElastiCache performance benchmarking results</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            margin: 0;
+            padding: 0;
+            background-color: #f5f5f5;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+            padding: 20px;
+            background-color: #fff;
+            border: 1px solid #e0e0e0;
+            border-radius: 5px;
+            box-shadow: 0 0 10px rgba(0, 0, 0, 0.1);
+        }
+
+        h2 {
+            font-size: 24px;
+            font-weight: bold;
+            margin: 10px 0;
+        }
+
+        #combinedChart {
+            max-width: 100%;
+            margin: 20px 0;
+        }
+
+        p {
+            font-size: 16px;
+            line-height: 1.4;
+        }
+
+        table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 20px;
+        }
+
+        table, th, td {
+            border: 1px solid #e0e0e0;
+        }
+
+        th, td {
+            padding: 8px;
+            text-align: left;
+        }
+
+        th {
+            background-color: #f0f0f0;
+        }
+
+        .source {
+            font-size: 14px;
+            font-style: italic;
+            margin-top: 20px;
+        }
+
+        #downloadButton {
+            display: block;
+            margin-top: 20px;
+            background-color: #007BFF;
+            color: #fff;
+            border: none;
+            padding: 10px 20px;
+            border-radius: 5px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+
+        #downloadButton:hover {
+            background-color: #0056b3;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h2>ElastiCache cluster (EC_CLUSTER_TYPE) performance benchmark result (Graviton vs x86 nodes)</h2>
+        <p>Note: It may take upto 15-20 minutes to complete the benchmarking. If you do not see any data below, please refresh the page again after 15 minutes.</p>
+
+        <canvas id="combinedChart" width="400" height="200"></canvas>
+
+        <p><b>This chart provides a comparative analysis of throughput and latency for the Graviton and x86 ElastiCache clusters across various test scenarios.</b></p>
+        <p>Here are the details of the ElastiCache and Client Instance used in the benchmarking</p>
+        <table border="1">
+            <tr>
+                <th colspan="3">Graviton ElastiCache cluster details</th>
+            </tr>
+            <tr>
+                <td><b>Configuration</b></td>
+                <td><b>Graviton Cluster</b></td>
+                <td><b>x86 Cluster</b></td>
+            </tr>
+            <tr>
+                <td>Cluster name</td>
+                <td>GRAVITON_CLUSTER_NAME</td>
+                <td>X86_CLUSTER_NAME</td>
+            </tr>
+            <tr>
+                <td>Region</td>
+                <td>AWS_REGION</td>
+                <td>AWS_REGION</td>
+            </tr>
+            <tr>
+                <td>Cluster type</td>
+                <td>EC_CLUSTER_TYPE</td>
+                <td>EC_CLUSTER_TYPE</td>
+            </tr>
+            <tr>
+                <td>Cluster node type</td>
+                <td>GRAVITON_EC_NODE_TYPE</td>
+                <td>X86_EC_NODE_TYPE</td>
+            </tr>
+            <tr>
+                <td>Cluster number of nodes</td>
+                <td>1</td>
+                <td>1</td>
+            </tr>
+            <tr>
+                <td>Cluster AZ</td>
+                <td>GRAVITON_EC_CLUSTER_AZ</td>
+                <td>X86_EC_CLUSTER_AZ</td>
+            </tr>
+        </table>
+        <table border="1">
+            <tr>
+                <th colspan="2">Load Generator instance details</th>
+            </tr>
+            <tr>
+                <td>Instance AMI</td>
+                <td>INSTANCE_AMI</td>
+            </tr>
+            <tr>
+                <td>Instance ID</td>
+                <td>INSTANCE_ID</td>
+            </tr>
+            <tr>
+                <td>Instance Type</td>
+                <td>INSTANCE_TYPE</td>
+            </tr>
+            <tr>
+                <td>Instance AZ</td>
+                <td>INSTANCE_AZ</td>
+            </tr>
+            <tr>
+                <td>Command for benchmarking Graviton Cluster</td>
+                <td>GRAVITON_CLUSTER_REDIS_COMMAND</td>
+            </tr>
+            <tr>
+                <td>Command for benchmarking x86 Cluster</td>
+                <td>X86_CLUSTER_REDIS_COMMAND</td>
+            </tr>
+        </table>
+    </div>
+
+    <button id="downloadButton">Download Data as CSV</button>
+
+    <script>
+        const combinedChartCanvas = document.getElementById('combinedChart');
+        const downloadButton = document.getElementById('downloadButton');
+        const messageElement = document.createElement('div');
+        async function fetchCSV(url) {
+            const response = await fetch(url);
+            if (!response.ok) {
+                throw new Error('File not found (404 error)');
+            }
+            return await response.text();
+        }
+    
+        function parseCSV(csv) {
+            const rows = csv.split('\n');
+            const data = [];
+    
+            for (let i = 1; i < rows.length; i++) {
+                const columns = rows[i].split(',');
+                const entry = {
+                    label: columns[0],
+                    rps: columns[1] ? parseFloat(columns[1].replace('"', '')) : NaN,
+                    avg_latency_ms: columns[2] ? parseFloat(columns[2].replace('"', '')) : NaN,
+                    p99_latency_ms: columns[6] ? parseFloat(columns[6].replace('"', '')) : NaN
+                };
+                data.push(entry);
+            }
+    
+            return data;
+        }
+    
+        function displayMessage(message) {
+            combinedChartCanvas.style.display = 'none';
+            downloadButton.style.display = 'none';
+            messageElement.textContent = message;
+            document.body.appendChild(messageElement);
+        }
+    
+        async function fetchDataAndRender() {
+            const armCsvFile = 'graviton.csv';
+            const x86CsvFile = 'x86.csv';
+    
+            try {
+                const [armdata, x86data] = await Promise.all([
+                    fetchCSV(armCsvFile),
+                    fetchCSV(x86CsvFile),
+                ]);
+    
+                const armdataParsed = parseCSV(armdata);
+                const x86dataParsed = parseCSV(x86data);
+    
+                // Extract labels and values for the charts
+                const labels = armdataParsed.map(entry => entry.label);
+                const armrps = armdataParsed.map(entry => entry.rps);
+                const x86rps = x86dataParsed.map(entry => entry.rps);
+                const avgLatency1 = armdataParsed.map(entry => entry.avg_latency_ms);
+                const avgLatency2 = x86dataParsed.map(entry => entry.avg_latency_ms);
+                const p99Latency1 = armdataParsed.map(entry => entry.p99_latency_ms);
+                const p99Latency2 = x86dataParsed.map(entry => entry.p99_latency_ms);
+    
+                // Define custom colors for the bars
+                const customColors = [
+                    'rgba(255, 99, 132, 1)', // Red
+                    'rgba(54, 162, 235, 1)', // Blue
+                    'rgba(0, 128, 128, 1)', // Teal
+                    'rgba(153, 102, 255, 1)', // Purple
+                    'rgba(255, 0, 255, 1)', // Magenta
+                    'rgba(255, 206, 86, 1)' // Yellow
+                ];
+    
+                // Create a combined chart with a bar chart for throughput and line charts for avg latency and p99 latency
+                const combinedCtx = document.getElementById('combinedChart').getContext('2d');
+                const combinedChart = new Chart(combinedCtx, {
+                    data: {
+                        labels: labels,
+                        datasets: [
+                            {
+                                label: 'Avg Latency in ms (' + armCsvFile.replace('.csv', '') + ')',
+                                data: avgLatency1,
+                                borderColor: customColors[2],
+                                fill: false,
+                                yAxisID: 'yAxis2',
+                                type: 'line',
+                                boarderWidth: 1,
+                                tension: 0.4
+                            },
+                            {
+                                label: 'Avg Latency in ms (' + x86CsvFile.replace('.csv', '') + ')',
+                                data: avgLatency2,
+                                borderColor: customColors[3],
+                                fill: false,
+                                yAxisID: 'yAxis2',
+                                type: 'line',
+                                boarderWidth: 1,
+                                tension: 0.4
+                            },
+                            {
+                                label: 'P99 Latency in ms (' + armCsvFile.replace('.csv', '') + ')',
+                                data: p99Latency1,
+                                borderColor: customColors[4],
+                                fill: false,
+                                yAxisID: 'yAxis2',
+                                type: 'line',
+                                boarderWidth: 1,
+                                tension: 0.4
+                            },
+                            {
+                                label: 'P99 Latency in ms (' + x86CsvFile.replace('.csv', '') + ')',
+                                data: p99Latency2,
+                                borderColor: customColors[5],
+                                fill: false,
+                                yAxisID: 'yAxis2',
+                                type: 'line',
+                                boarderWidth: 1,
+                                tension: 0.4
+                            },
+                            {
+                                label: 'RPS (' + armCsvFile.replace('.csv', '') + ')',
+                                data: armrps,
+                                backgroundColor: customColors[0],
+                                yAxisID: 'yAxis1',
+                                type: 'bar',
+                            },
+                            {
+                                label: 'RPS (' + x86CsvFile.replace('.csv', '') + ')',
+                                data: x86rps,
+                                backgroundColor: customColors[1],
+                                yAxisID: 'yAxis1',
+                                type: 'bar',
+                            }
+                        ]
+                    },
+                    options: {
+                        responsive: true,
+                        plugins: {
+                            tooltip: {
+                                mode: 'index',
+                                intersect: false
+                            },
+                            title: {
+                                display: true,
+                                text: 'ElastiCache EC_CLUSTER_TYPE cluster performance benchmark result (Graviton vs x86 nodes)'
+                            },
+                            ticks: {
+                                fontStyle: 'bold'
+                            },
+                            bar: {
+                                categorySpacing: 1,
+                                barSpacing: 2
+                            }
+                        },
+                        scales: {
+                            yAxis1: {
+                                type: 'linear',
+                                display: true,
+                                position: 'left',
+                                title: {
+                                    display: true,
+                                    text: 'Request/Sec',
+                                    font: {
+                                        weight: 'bold'
+                                    }
+                                }
+                            },
+                            yAxis2: {
+                                type: 'linear',
+                                display: true,
+                                position: 'right',
+                                title: {
+                                    display: true,
+                                    text: 'Latency in ms',
+                                    font: {
+                                        weight: 'bold'
+                                    }
+                                }
+                            },
+                            x: {
+                                title: {
+                                    display: true,
+                                    text: 'Test Scenarios',
+                                    font: {
+                                        weight: 'bold'
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+    
+                // Download data as CSV
+                const downloadButton = document.getElementById('downloadButton');
+                downloadButton.addEventListener('click', () => {
+                    const csvData = 'Graviton' + armdata + '\n' +
+                        'x86' + x86data;
+    
+                    const blob = new Blob([csvData], { type: 'text/csv' });
+                    const url = window.URL.createObjectURL(blob);
+                    const a = document.createElement('a');
+                    a.href = url;
+                    a.download = 'comparison_data.csv';
+                    a.click();
+                    window.URL.revokeObjectURL(url);
+                });
+            } catch (error) {
+                console.error(error);
+    
+                if (error.message === 'File not found (404 error)') {
+                    displayMessage('Benchmark still running...');
+                } else {
+                    displayMessage('Error occurred while fetching data');
+                }
+            }
+        }
+    
+        fetchDataAndRender();
+    </script>
+    
+    
+</body>
+</html>
